@@ -1,0 +1,23 @@
+{
+  "name": "verificacion-identidad-server",
+  "version": "1.0.0",
+  "description": "Servidor de verificación de identidad con soporte Render",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node server.js"
+  },
+  "keywords": [
+    "verification",
+    "authentication",
+    "identity"
+  ],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "express": "^4.18.2"
+  },
+  "engines": {
+    "node": "18.x"
+  }
+}
