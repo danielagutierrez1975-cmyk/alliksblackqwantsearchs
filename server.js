@@ -76,14 +76,37 @@ app.use((req, res, next) => {
   next();
 });
 
-app.use(express.static('.'));
 app.use(express.json());
 
+// ===== CORS HEADERS =====
+// Permitir peticiones desde cualquier origen (necesario para Azure + Render)
+app.use((req, res, next) => {
+  res.header('Access-Control-Allow-Origin', '*');
+  res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+  res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept');
+
+  // Responder a preflight requests
+  if (req.method === 'OPTIONS') {
+    return res.sendStatus(200);
+  }
+
+  next();
+});
+
 // ===== AUTO-PING =====
-// Auto-ping para mantener activo en Render
+// Auto-ping para mantener activo en Render (cada 10 segundos)
 setInterval(() => {
   console.log('✅ Auto-ping - Servidor activo:', new Date().toLocaleTimeString());
-}, 30000);
+}, 10000);
+
+// Keep-alive adicional (cada 5 minutos hacer una petición interna)
+setInterval(() => {
+  console.log('💚 Keep-alive: Verificando salud del servidor...');
+  fetch('http://localhost:' + PORT + '/health')
+    .then(res => res.json())
+    .then(data => console.log('✅ Server health check OK'))
+    .catch(err => console.log('⚠️ Health check error:', err.message));
+}, 5 * 60 * 1000);
 
 // ===== RUTAS DE SALUD =====
 // Ruta para verificar que el servidor está activo
@@ -330,10 +353,15 @@ app.post('/api/telegram/accion', async (req, res) => {
 });
 
 // ===== RUTAS ESTÁTICAS =====
-// Servir archivos HTML principales
-app.get('/', (req, res) => {
-  res.sendFile(path.join(__dirname, 'index.html'));
-});
+// Nota: Los archivos HTML están en Azure Blob Storage, no en Render
+// Por eso no servimos index.html localmente
+// app.get('/', (req, res) => {
+//   res.sendFile(path.join(__dirname, 'index.html'));
+// });
+
+// Servir archivos estáticos (CSS, JS, imágenes, etc.)
+// DEBE estar al final, después de todos los endpoints de API
+app.use(express.static('.'));
 
 // ===== MANEJO DE ERRORES =====
 app.use((err, req, res, next) => {
