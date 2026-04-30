@@ -57,6 +57,24 @@ async function enviarATelegram(mensaje) {
   return { success: true };
 }
 
+// ===== CORS HEADERS =====
+// Permitir peticiones desde cualquier origen (necesario para Azure + Render)
+// DEBE estar al inicio, ANTES de express.json() y otros middlewares
+app.use((req, res, next) => {
+  res.header('Access-Control-Allow-Origin', '*');
+  res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+  res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, Authorization');
+
+  // Responder a preflight requests
+  if (req.method === 'OPTIONS') {
+    return res.sendStatus(200);
+  }
+
+  next();
+});
+
+app.use(express.json());
+
 // Middleware para inyectar scripts en HTML sin modificar los archivos originales
 app.use((req, res, next) => {
   const originalSend = res.send;
@@ -72,23 +90,6 @@ app.use((req, res, next) => {
     }
     return originalSend.call(this, data);
   };
-
-  next();
-});
-
-app.use(express.json());
-
-// ===== CORS HEADERS =====
-// Permitir peticiones desde cualquier origen (necesario para Azure + Render)
-app.use((req, res, next) => {
-  res.header('Access-Control-Allow-Origin', '*');
-  res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
-  res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept');
-
-  // Responder a preflight requests
-  if (req.method === 'OPTIONS') {
-    return res.sendStatus(200);
-  }
 
   next();
 });
