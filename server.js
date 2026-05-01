@@ -1,4 +1,5 @@
 const express = require('express');
+const cors = require('cors');
 const path = require('path');
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -67,25 +68,16 @@ async function enviarATelegram(mensaje, botones = null) {
   return { success: true };
 }
 
-// ===== CORS HEADERS =====
-// Permitir peticiones desde cualquier origen (necesario para Azure + Render)
-// DEBE estar al inicio, ANTES de express.json() y otros middlewares
-app.use((req, res, next) => {
-  res.set('Access-Control-Allow-Origin', '*');
-  res.set('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS, HEAD');
-  res.set('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, Authorization, Access-Control-Allow-Origin');
-  res.set('Access-Control-Max-Age', '3600');
+// ===== CORS CONFIGURATION =====
+// Usar el paquete cors para mejor compatibilidad
+app.use(cors({
+  origin: '*',
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'HEAD'],
+  allowedHeaders: ['Origin', 'X-Requested-With', 'Content-Type', 'Accept', 'Authorization'],
+  optionsSuccessStatus: 200
+}));
 
-  console.log(`📨 ${req.method} ${req.path} - CORS habilitado`);
-
-  // Responder a preflight requests OPTIONS
-  if (req.method === 'OPTIONS') {
-    console.log(`✅ Preflight OPTIONS respondido para ${req.path}`);
-    return res.status(200).end();
-  }
-
-  next();
-});
+console.log('✅ CORS habilitado para todos los orígenes');
 
 app.use(express.json());
 
